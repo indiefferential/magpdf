@@ -7,8 +7,20 @@
   },
    {
     "slug": "wnsep3",
-    "title": "What's New? Sep 4",
+    "title": "What's New? Sep 3",
     "type": "pdf",
     "file": "books/wnsep3.pdf"
+  },
+    {
+    "slug": "wnsep2",
+    "title": "What's New? Sep 2",
+    "type": "pdf",
+    "file": "books/wnsep2.pdf"
+  },
+     {
+    "slug": "wnsep1",
+    "title": "What's New? Sep 1",
+    "type": "pdf",
+    "file": "books/wnsep1pdf.pdf"
   }
 ]
