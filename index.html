@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Browse Indiefferential Magazine issues and open each edition as a flipbook.">
+  <meta property="og:title" content="Issue Library — Indiefferential Magazine">
+  <meta property="og:description" content="Browse Indiefferential Magazine issues and open each edition as a flipbook.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>Issue Library — Indiefferential Magazine</title>
+
+  <style>
+    :root {
+      --red: #e21b2d;
+      --ink: #0a0a0a;
+      --paper: #ffffff;
+      --soft: #f5f5f3;
+      --line: #d9d9d7;
+      --muted: #77736f;
+      --serif: Georgia, "Times New Roman", serif;
+      --sans: Arial, Helvetica, sans-serif;
+      --shadow: 7px 7px 0 var(--ink);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::selection { background: var(--red); color: #fff; }
+
+    header {
+      position: relative;
+      padding: clamp(65px, 10vw, 125px) 4.5vw clamp(45px, 6vw, 75px);
+      border-bottom: 1px solid var(--ink);
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, transparent 0 49.9%, rgba(10, 10, 10, .045) 50%, transparent 50.1%),
+        linear-gradient(0deg, transparent 0 49.9%, rgba(10, 10, 10, .045) 50%, transparent 50.1%);
+    }
+
+    header::before {
+      content: "INDIEFFERENTIAL / MAGAZINE";
+      display: flex;
+      align-items: center;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 62px;
+      padding: 0 4.5vw;
+      border-bottom: 1px solid var(--line);
+      color: var(--red);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .16em;
+    }
+
+    header::after {
+      content: "ARCHIVE";
+      position: absolute;
+      right: 1vw;
+      bottom: -18px;
+      color: var(--red);
+      font-family: var(--serif);
+      font-size: clamp(90px, 18vw, 245px);
+      font-weight: 900;
+      letter-spacing: -.08em;
+      line-height: .8;
+      opacity: .065;
+      pointer-events: none;
+    }
+
+    header h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 1000px;
+      margin: 0 0 25px;
+      font-family: var(--serif);
+      font-size: clamp(58px, 9vw, 135px);
+      font-weight: 900;
+      letter-spacing: -.055em;
+      line-height: .84;
+    }
+
+    header h1::after { content: "."; color: var(--red); }
+
+    header p {
+      position: relative;
+      z-index: 1;
+      max-width: 420px;
+      margin: 0;
+      border-top: 4px solid var(--ink);
+      padding-top: 15px;
+      font-family: var(--serif);
+      font-size: clamp(19px, 2.3vw, 27px);
+      font-weight: 700;
+      line-height: 1.15;
+    }
+
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 55px 28px;
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: clamp(65px, 9vw, 110px) 4.5vw 100px;
+    }
+
+    .card {
+      display: block;
+      position: relative;
+      color: inherit;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform .25s ease;
+    }
+
+    .card:hover { transform: translateY(-4px); }
+
+    .cover {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 8.5 / 11;
+      background: #fff;
+      border: 1px solid var(--ink);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      transition: box-shadow .25s ease, transform .25s ease;
+    }
+
+    .card:hover .cover {
+      transform: translate(-3px, -3px);
+      box-shadow: 10px 10px 0 var(--ink);
+    }
+
+    .cover img,
+    .cover canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .cover .spine {
+      position: absolute;
+      z-index: 5;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 8px;
+      background: linear-gradient(90deg, rgba(0, 0, 0, .28), transparent);
+      pointer-events: none;
+    }
+
+    .card .meta { padding: 17px 1px 0; }
+
+    .card .meta::before {
+      content: "ISSUE";
+      display: block;
+      margin-bottom: 7px;
+      color: var(--red);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .12em;
+    }
+
+    .card .title {
+      font-family: var(--serif);
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.05;
+    }
+
+    .card .pages {
+      margin-top: 8px;
+      color: var(--red);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    #empty,
+    #err {
+      display: none;
+      max-width: 1000px;
+      margin: 70px auto 80px;
+      padding: 55px 25px;
+      border: 1px solid var(--ink);
+      background: var(--soft);
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    code {
+      padding: 3px 6px;
+      background: rgba(226, 27, 45, .08);
+      color: var(--red);
+      font-family: monospace;
+    }
+
+    @media (max-width: 1050px) {
+      #grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 800px) {
+      #grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 45px 24px;
+      }
+    }
+
+    @media (max-width: 600px) {
+      header { padding: 105px 20px 50px; }
+      header::before { padding: 0 20px; font-size: 9px; }
+      header h1 { font-size: clamp(52px, 16vw, 85px); letter-spacing: -.05em; }
+      header p { font-size: 20px; }
+      #grid { padding: 60px 20px 70px; gap: 40px 16px; }
+      .cover { box-shadow: 5px 5px 0 var(--ink); }
+      .card:hover .cover { box-shadow: 7px 7px 0 var(--ink); }
+      .card .title { font-size: 17px; }
+      .card .pages { font-size: 8px; }
+      #empty, #err { margin-inline: 20px; }
+    }
+
+    @media (max-width: 390px) {
+      #grid { grid-template-columns: 1fr; }
+      .cover { max-width: 320px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .card, .cover { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Issue Library</h1>
+    <p>Pick an issue to open it as a flipbook</p>
+  </header>
+
+  <main>
+    <section id="grid" aria-label="Magazine issues"></section>
+
+    <p id="empty">
+      No issues yet — add one to <code>books.json</code>.
+    </p>
+
+    <p id="err">
+      Could not load <code>books.json</code>. If you're testing locally by
+      double-clicking this file, run a local server instead (see README) —
+      browsers block local file fetches.
+    </p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js"></script>
+  <script>
+    (async function () {
+      if (window.pdfjsLib) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
+      }
+
+      const grid = document.getElementById("grid");
+
+      async function pdfFirstPageThumb(file, imgEl) {
+        try {
+          const pdf = await pdfjsLib.getDocument(file).promise;
+          const page = await pdf.getPage(1);
+          const base = page.getViewport({ scale: 1 });
+          const scale = 400 / base.width;
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          const context = canvas.getContext("2d");
+
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          await page.render({
+            canvasContext: context,
+            viewport: viewport
+          }).promise;
+
+          imgEl.replaceWith(canvas);
+        } catch (err) {
+          // Leave the paper placeholder visible if rendering fails.
+        }
+      }
+
+      try {
+        const res = await fetch("books.json");
+        if (!res.ok) throw new Error("missing");
+
+        const books = await res.json();
+
+        if (!books.length) {
+          document.getElementById("empty").style.display = "block";
+          return;
+        }
+
+        books.forEach(function (book) {
+          const isPdf = book.type === "pdf";
+          const card = document.createElement("a");
+          card.className = "card";
+          card.href = "viewer.html?book=" + encodeURIComponent(book.slug);
+
+          const cover = document.createElement("div");
+          cover.className = "cover";
+
+          const image = document.createElement("img");
+          image.alt = book.title + " cover";
+
+          const spine = document.createElement("span");
+          spine.className = "spine";
+          spine.setAttribute("aria-hidden", "true");
+
+          const meta = document.createElement("div");
+          meta.className = "meta";
+
+          const title = document.createElement("div");
+          title.className = "title";
+          title.textContent = book.title;
+
+          const pages = document.createElement("div");
+          pages.className = "pages";
+          pages.textContent = isPdf ? "PDF" : book.totalPages + " pages";
+
+          cover.append(image, spine);
+          meta.append(title, pages);
+          card.append(cover, meta);
+          grid.appendChild(card);
+
+          if (isPdf && book.cover) {
+            image.src = book.cover;
+          } else if (isPdf && book.file) {
+            pdfFirstPageThumb(book.file, image);
+          } else if (book.cover) {
+            image.src = book.cover;
+          }
+        });
+      } catch (err) {
+        document.getElementById("err").style.display = "block";
+      }
+    })();
+  </script>
+</body>
+</html>
