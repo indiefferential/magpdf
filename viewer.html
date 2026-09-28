@@ -480,6 +480,9 @@
           "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
       }
 
+      // Max zoom the viewer allows.
+      const MAX_ZOOM = 3;
+
       function pad(n) { return String(n).padStart(2, "0"); }
       function showError(message) {
         document.getElementById("loader").style.display = "none";
@@ -563,12 +566,15 @@
       const pageEls = [];
       const loaderLabel = document.querySelector("#loader span");
 
+      let pdfCtl = null;
+      let imgCtl = null;
+
       if (BOOK_TYPE === "pdf") {
         if (!window.pdfjsLib) {
           showError("pdf.js failed to load — check your internet connection and reload.");
           return;
         }
-        if (loaderLabel) loaderLabel.textContent = "Rendering pages…";
+        if (loaderLabel) loaderLabel.textContent = "Opening PDF…";
 
         let pdf;
         try {
@@ -579,72 +585,205 @@
         }
 
         TOTAL_PAGES = pdf.numPages;
-        const TARGET_WIDTH = 850;
-        if (loaderLabel) loaderLabel.textContent = "Rendering page 0 / " + TOTAL_PAGES + "…";
 
-        const slowTimer = setTimeout(function () {
-          if (loaderLabel) loaderLabel.textContent += " (large file — still working)";
-        }, 12000);
-        const verySlowTimer = setTimeout(function () {
-          if (loaderLabel) loaderLabel.textContent = "Still rendering — if this doesn't finish soon, try compressing the PDF.";
-        }, 40000);
+        // ---- Lazy, adaptive PDF rendering -------------------------------
+        // Every page gets a placeholder canvas up front. Only the first few
+        // pages are rendered before the book opens; the rest render in the
+        // background, nearest-to-the-reader first. When the reader zooms in,
+        // just the visible page(s) are re-rendered at higher resolution, and
+        // dropped back to normal resolution when they zoom out or turn the page.
+        const DPR = Math.min(window.devicePixelRatio || 1, 2);
+        const BASE_WIDTH = Math.round(800 * DPR);          // normal view
+        const MAX_WIDTH = 3000;                            // hard cap per page
+        const MID_WIDTH = Math.min(MAX_WIDTH, BASE_WIDTH * 2);   // zoom 1.2x–2x
+        const HI_WIDTH = MAX_WIDTH;                        // zoom > 2x
+        const MAX_PIXELS = 9e6;                            // keeps mobile browsers happy
+        const CONCURRENCY = 2;
+        const INITIAL_PAGES = Math.min(TOTAL_PAGES, 4);
 
-        let renderedCount = 0;
-        const canvasResults = new Array(TOTAL_PAGES);
+        const canvases = [];
+        const states = [];
+        const pdfPages = [];
 
-        async function renderOnePage(index) {
-          const page = await pdf.getPage(index);
-          const baseViewport = page.getViewport({ scale: 1 });
-          const viewport = page.getViewport({ scale: TARGET_WIDTH / baseViewport.width });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const context = canvas.getContext("2d");
-          await page.render({ canvasContext: context, viewport: viewport }).promise;
-          canvasResults[index - 1] = canvas;
-          renderedCount += 1;
-          if (loaderLabel) loaderLabel.textContent = "Rendering page " + renderedCount + " / " + TOTAL_PAGES + "…";
+        function getPdfPage(i) {
+          if (!pdfPages[i]) pdfPages[i] = pdf.getPage(i + 1);
+          return pdfPages[i];
         }
 
+        async function renderPage(i, target) {
+          const page = await getPdfPage(i);
+          const base = page.getViewport({ scale: 1 });
+          const aspect = base.height / base.width;
+          let w = Math.min(target, MAX_WIDTH);
+          if (w * w * aspect > MAX_PIXELS) w = Math.floor(Math.sqrt(MAX_PIXELS / aspect));
+          const viewport = page.getViewport({ scale: w / base.width });
+
+          // Render off-screen, then swap in, so the visible page never flickers blank.
+          const tmp = document.createElement("canvas");
+          tmp.width = Math.floor(viewport.width);
+          tmp.height = Math.floor(viewport.height);
+          await page.render({ canvasContext: tmp.getContext("2d"), viewport: viewport }).promise;
+
+          const dst = canvases[i];
+          dst.width = tmp.width;
+          dst.height = tmp.height;
+          dst.getContext("2d").drawImage(tmp, 0, 0);
+          tmp.width = 0;
+          tmp.height = 0;
+        }
+
+        for (let i = 0; i < TOTAL_PAGES; i += 1) {
+          const canvas = document.createElement("canvas");
+          canvas.width = 1;
+          canvas.height = 1;
+          canvases.push(canvas);
+          states.push({ width: 0, want: 0, busy: false });
+        }
+
+        // Render just the opening pages before showing the book.
+        let initialDone = 0;
+        if (loaderLabel) loaderLabel.textContent = "Rendering page 0 / " + INITIAL_PAGES + "…";
         try {
-          const concurrency = 4;
-          let nextIndex = 1;
-          async function worker() {
-            while (nextIndex <= TOTAL_PAGES) {
-              const index = nextIndex++;
-              await renderOnePage(index);
+          await Promise.all(Array.from({ length: INITIAL_PAGES }, async function (_, i) {
+            const s = states[i];
+            s.busy = true;
+            s.want = BASE_WIDTH;
+            try {
+              await renderPage(i, BASE_WIDTH);
+            } finally {
+              s.width = BASE_WIDTH;
+              s.busy = false;
             }
-          }
-          await Promise.all(Array.from({ length: Math.min(concurrency, TOTAL_PAGES) }, worker));
+            initialDone += 1;
+            if (loaderLabel) loaderLabel.textContent = "Rendering page " + initialDone + " / " + INITIAL_PAGES + "…";
+          }));
         } catch (error) {
-          clearTimeout(slowTimer);
-          clearTimeout(verySlowTimer);
           console.error(error);
           showError("Something went wrong rendering the PDF (" + (error.message || error) + "). Try a smaller file, or reload.");
           return;
         }
 
-        clearTimeout(slowTimer);
-        clearTimeout(verySlowTimer);
-
         for (let index = 1; index <= TOTAL_PAGES; index += 1) {
           const page = makePageShell(index, index === 1 || index === TOTAL_PAGES);
-          page.insertBefore(canvasResults[index - 1], page.firstChild);
+          page.insertBefore(canvases[index - 1], page.firstChild);
           bookEl.appendChild(page);
           pageEls.push(page);
         }
+
+        // Background scheduler: always renders whichever pending page is
+        // closest to the one the reader is on.
+        let started = false;
+        let active = 0;
+        let current = 0;
+        let portrait = false;
+        let zoomVal = 1;
+        let zoomTimer = null;
+
+        function pump() {
+          if (!started) return;
+          while (active < CONCURRENCY) {
+            let best = -1;
+            let bestDist = Infinity;
+            for (let i = 0; i < TOTAL_PAGES; i += 1) {
+              const s = states[i];
+              if (s.busy || s.want === s.width) continue;
+              const dist = Math.abs(i - current);
+              if (dist < bestDist) { bestDist = dist; best = i; }
+            }
+            if (best < 0) return;
+            run(best);
+          }
+        }
+
+        async function run(i) {
+          const s = states[i];
+          const target = s.want;
+          s.busy = true;
+          active += 1;
+          try {
+            await renderPage(i, target);
+          } catch (error) {
+            console.error("Page " + (i + 1) + " failed to render", error);
+          }
+          s.width = target;   // set even on failure so it doesn't retry forever
+          s.busy = false;
+          active -= 1;
+          pump();
+        }
+
+        function applyQuality() {
+          const hi = zoomVal > 2 ? HI_WIDTH : (zoomVal > 1.2 ? MID_WIDTH : BASE_WIDTH);
+          for (let i = 0; i < TOTAL_PAGES; i += 1) {
+            const visible = i === current || (!portrait && i === current + 1);
+            states[i].want = (visible && hi > BASE_WIDTH) ? hi : BASE_WIDTH;
+          }
+          pump();
+        }
+
+        pdfCtl = {
+          start: function () {
+            started = true;
+            for (let i = 0; i < TOTAL_PAGES; i += 1) states[i].want = BASE_WIDTH;
+            pump();
+          },
+          setCurrent: function (index, isPortrait) {
+            current = index;
+            portrait = !!isPortrait;
+            if (started) applyQuality();
+          },
+          zoomChanged: function (z) {
+            zoomVal = z;
+            clearTimeout(zoomTimer);
+            zoomTimer = setTimeout(function () { if (started) applyQuality(); }, 250);
+          }
+        };
       } else {
         try {
+          // First few pages load immediately; the rest load in the background,
+          // nearest to the reader first.
+          const EAGER = 6;
+          const IMG_CONCURRENCY = 3;
+          const queue = [];
+
           for (let index = 1; index <= TOTAL_PAGES; index += 1) {
             const page = makePageShell(index, index === 1 || index === TOTAL_PAGES);
             const image = document.createElement("img");
-            image.src = pageSrc(index);
             image.draggable = false;
+            image.decoding = "async";
             image.alt = "Page " + index;
+            if (index <= EAGER) {
+              image.src = pageSrc(index);
+            } else {
+              queue.push({ img: image, index: index });
+            }
             page.insertBefore(image, page.firstChild);
             bookEl.appendChild(page);
             pageEls.push(page);
           }
+
+          let imgStarted = false;
+          let imgActive = 0;
+          let imgCurrent = 0;
+
+          function pumpImages() {
+            if (!imgStarted) return;
+            while (imgActive < IMG_CONCURRENCY && queue.length) {
+              queue.sort(function (a, b) {
+                return Math.abs(a.index - 1 - imgCurrent) - Math.abs(b.index - 1 - imgCurrent);
+              });
+              const item = queue.shift();
+              imgActive += 1;
+              const done = function () { imgActive -= 1; pumpImages(); };
+              item.img.onload = done;
+              item.img.onerror = done;
+              item.img.src = pageSrc(item.index);
+            }
+          }
+
+          imgCtl = {
+            start: function () { imgStarted = true; pumpImages(); },
+            setCurrent: function (index) { imgCurrent = index; pumpImages(); }
+          };
         } catch (error) {
           console.error(error);
           showError("Something went wrong loading the page images. Check the folder path and file names in books.json.");
@@ -700,12 +839,25 @@
         nextBarBtn.classList.toggle("disabled", current >= total - 1);
       }
 
+      function onViewChange() {
+        updateUI();
+        const index = pageFlip.getCurrentPageIndex();
+        const isPortrait = typeof pageFlip.getOrientation === "function" && pageFlip.getOrientation() === "portrait";
+        if (pdfCtl) pdfCtl.setCurrent(index, isPortrait);
+        if (imgCtl) imgCtl.setCurrent(index);
+      }
+
       pageFlip.on("init", function () {
         updateUI();
         loader.style.opacity = "0";
         setTimeout(function () { loader.style.display = "none"; }, 500);
+        // Start background loading only once the book is on screen.
+        if (pdfCtl) pdfCtl.start();
+        if (imgCtl) imgCtl.start();
+        onViewChange();
       });
-      pageFlip.on("flip", updateUI);
+      pageFlip.on("flip", onViewChange);
+      pageFlip.on("changeOrientation", onViewChange);
 
       prevBtn.addEventListener("click", function () { pageFlip.flipPrev(); });
       prevBarBtn.addEventListener("click", function () { pageFlip.flipPrev(); });
@@ -761,7 +913,6 @@
       const bookWrap = document.getElementById("bookWrap");
       const panOverlay = document.getElementById("panOverlay");
       const MIN_ZOOM = .5;
-      const MAX_ZOOM = 3;
       let zoom = 1;
       let panX = 0;
       let panY = 0;
@@ -800,6 +951,7 @@
         }
         zoom = nextZoom;
         applyZoom();
+        if (pdfCtl) pdfCtl.zoomChanged(zoom);
       }
 
       function zoomAtCenter(factor) {
